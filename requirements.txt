@@ -1,0 +1,21 @@
+# General
+numpy
+opencv-python
+requests
+
+# Kafka client
+kafka-python
+
+# For detection_service (example uses torch & yolov5)
+torch
+torchvision
+ultralytics
+
+# For encoding and base64
+Pillow
+
+# FastAPI & WebSocket support (streaming_service)
+fastapi
+uvicorn[standard]
+python-multipart
+

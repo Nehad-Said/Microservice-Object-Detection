@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Pizza Violation Monitor</title>
+  <style>
+    canvas {
+      border: 1px solid black;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div>Violations: <span id="count">0</span></div>
+  <script>
+    const ws = new WebSocket("ws://localhost:8000/ws");
+    ws.onmessage = e => {
+      const data = JSON.parse(e.data);
+      const img = new Image();
+      img.src = 'data:image/jpeg;base64,' + data.frame_b64;
+      img.onload = () => {
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+
+        // Draw ROI zones (example fixed zones)
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        const roiZones = [
+          { x: 50, y: 50, width: 200, height: 150 },
+          { x: 300, y: 100, width: 250, height: 180 }
+        ];
+        roiZones.forEach(zone => {
+          ctx.strokeRect(zone.x, zone.y, zone.width, zone.height);
+        });
+        ctx.setLineDash([]); // reset dash
+
+        // Draw bounding boxes and labels
+        if (data.detections) {
+          data.detections.forEach(d => {
+            const [x1, y1, x2, y2] = d.bbox;
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+            // Draw label background
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.7)';
+            ctx.fillRect(x1, y1 - 20, ctx.measureText(d.label).width + 10, 20);
+
+            // Draw label text
+            ctx.fillStyle = 'white';
+            ctx.font = '16px Arial';
+            ctx.fillText(d.label, x1 + 5, y1 - 5);
+          });
+        }
+      };
+      document.getElementById('count').innerText = data.violation_count;
+    };
+  </script>
+</body>
+</html>
+
