@@ -1,29 +1,49 @@
+import sys
+import os
+sys.path.append('/app/shared')
+
 from confluent_kafka import Consumer, Producer
 from ultralytics import YOLO
 import cv2
 import numpy as np
 import json
-import os
 import time
 from datetime import datetime
+from database import db_manager
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 print("Starting detection service...")
 
 # Load YOLO model
 try:
-    model = YOLO("models/best.pt")
-    print("YOLO model loaded successfully")
+    model = YOLO("/app/models/best.pt")
+    print("Custom YOLO model loaded successfully")
 except Exception as e:
-    print(f"Error loading YOLO model: {e}")
+    print(f"Error loading custom YOLO model: {e}")
     print("Using default YOLOv8 model...")
     model = YOLO("yolov8n.pt")  # Fallback to default model
 
+# Initialize database connection
+try:
+    db_manager.connect()
+    print("Database connection established")
+except Exception as e:
+    print(f"Database connection failed: {e}")
+    # Continue without database for now
+
+# Kafka setup
+kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+
 # Kafka consumer setup with retry logic
 consumer = None
-for attempt in range(10):
+for attempt in range(20):  # Increased retry attempts
     try:
         consumer = Consumer({
-            'bootstrap.servers': 'kafka:9092',
+            'bootstrap.servers': kafka_servers,
             'group.id': 'detector',
             'auto.offset.reset': 'earliest',
             'enable.auto.commit': True,
@@ -33,7 +53,7 @@ for attempt in range(10):
         print("Connected to Kafka consumer")
         break
     except Exception as e:
-        print(f"Kafka consumer connection failed: {e} — retrying in 5s")
+        print(f"Kafka consumer connection failed (attempt {attempt + 1}): {e}")
         time.sleep(5)
 
 if consumer is None:
@@ -41,32 +61,64 @@ if consumer is None:
 
 # Kafka producer setup
 producer = None
-for attempt in range(10):
+for attempt in range(20):
     try:
-        producer = Producer({'bootstrap.servers': 'kafka:9092'})
+        producer = Producer({'bootstrap.servers': kafka_servers})
         print("Connected to Kafka producer")
         break
     except Exception as e:
-        print(f"Kafka producer connection failed: {e} — retrying in 5s")
+        print(f"Kafka producer connection failed (attempt {attempt + 1}): {e}")
         time.sleep(5)
 
 if producer is None:
     raise Exception("Failed to connect to Kafka producer after multiple attempts")
 
 # Create violations directory
-os.makedirs('violations', exist_ok=True)
+os.makedirs('/app/violations', exist_ok=True)
 print("Violations directory created")
+
+# Violation detection logic
+def detect_violation(detections):
+    """
+    Implement your specific violation detection logic here
+    For food safety: detect if hand touches ingredient without scooper
+    """
+    violation = False
+    violation_type = None
+    violation_description = None
+    
+    # Simple example logic - customize based on your model classes
+    hand_detected = False
+    scooper_detected = False
+    ingredient_detected = False
+    
+    for detection in detections:
+        label = detection['label'].lower()
+        if 'hand' in label:
+            hand_detected = True
+        elif 'scoop' in label or 'utensil' in label:
+            scooper_detected = True
+        elif 'ingredient' in label or 'food' in label:
+            ingredient_detected = True
+    
+    # Example violation logic
+    if hand_detected and ingredient_detected and not scooper_detected:
+        violation = True
+        violation_type = "hand_without_scooper"
+        violation_description = "Hand detected handling ingredient without proper scooper/utensil"
+        
+    return violation, violation_type, violation_description
 
 print("Starting frame processing loop...")
 frame_count = 0
+violation_count = 0
 
 while True:
     try:
-        # Poll for messages with a longer timeout
+        # Poll for messages
         msg = consumer.poll(5.0)
         
         if msg is None:
-            print("No message received, continuing...")
             continue
             
         if msg.error():
@@ -75,10 +127,10 @@ while True:
         
         # Skip test messages
         if msg.value() == b'test':
-            print("Received test message, skipping...")
             continue
         
-        print(f"Received frame message, size: {len(msg.value())} bytes")
+        frame_count += 1
+        print(f"Processing frame {frame_count}...")
         
         # Decode frame from bytes
         try:
@@ -89,17 +141,13 @@ while True:
                 print("Failed to decode frame, skipping...")
                 continue
                 
-            print(f"Frame decoded successfully, shape: {frame.shape}")
-            
         except Exception as e:
             print(f"Error decoding frame: {e}")
             continue
         
         # Run YOLO detection
         try:
-            results = model(frame, verbose=False)  # Disable verbose output
-            frame_count += 1
-            print(f"Processed frame {frame_count}")
+            results = model(frame, verbose=False)
             
         except Exception as e:
             print(f"Error running YOLO detection: {e}")
@@ -107,7 +155,6 @@ while True:
         
         # Process detection results
         detections = []
-        violation = False
         
         for r in results:
             if r.boxes is not None:
@@ -125,40 +172,82 @@ while True:
                         }
                         detections.append(detection)
                         
-                        # Add your violation detection logic here
-                        # For example, if detecting people in restricted areas:
-                        if cls_name == 'person':  # Adjust based on your model classes
-                            violation = True
-                            print(f"Violation detected: {cls_name} at {[x1, y1, x2, y2]}")
-                        
                     except Exception as e:
                         print(f"Error processing detection box: {e}")
                         continue
         
-        print(f"Found {len(detections)} detections, violation: {violation}")
+        # Check for violations
+        violation, violation_type, violation_description = detect_violation(detections)
         
-        # Save violation frame if needed
         if violation:
+            violation_count += 1
+            print(f"VIOLATION DETECTED #{violation_count}: {violation_description}")
+            
+            # Save violation frame
             try:
-                timestamp = datetime.utcnow().isoformat().replace(':', '-')  # Windows-safe filename
-                path = f"violations/{timestamp}.jpg"
-                cv2.imwrite(path, frame)
-                print(f"Violation frame saved to {path}")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Include milliseconds
+                violation_filename = f"violation_{timestamp}_frame_{frame_count}.jpg"
+                violation_path = f"/app/violations/{violation_filename}"
+                cv2.imwrite(violation_path, frame)
+                print(f"Violation frame saved: {violation_filename}")
+                
+                # Save to database
+                try:
+                    # Prepare bounding boxes for database
+                    bounding_boxes = []
+                    labels = []
+                    
+                    for det in detections:
+                        x1, y1, x2, y2 = det['bbox']
+                        bounding_boxes.append({
+                            'x': float(x1),
+                            'y': float(y1), 
+                            'width': float(x2 - x1),
+                            'height': float(y2 - y1),
+                            'class_name': det['label'],
+                            'confidence': float(det['confidence'])
+                        })
+                        
+                        labels.append({
+                            'label_name': det['label'],
+                            'confidence': float(det['confidence'])
+                        })
+                    
+                    # Insert violation into database
+                    violation_id = db_manager.insert_violation(
+                        frame_number=frame_count,
+                        frame_path=violation_path,
+                        violation_type=violation_type,
+                        violation_description=violation_description,
+                        confidence_score=max([det['confidence'] for det in detections]) if detections else 0.0,
+                        bounding_boxes=bounding_boxes,
+                        labels=labels
+                    )
+                    print(f"Violation saved to database with ID: {violation_id}")
+                    
+                except Exception as e:
+                    print(f"Error saving violation to database: {e}")
+                
             except Exception as e:
                 print(f"Error saving violation frame: {e}")
         
         # Send detection results to Kafka
         try:
             detection_data = {
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now().isoformat(),
+                'frame_count': frame_count,
                 'detections': detections,
                 'violation': violation,
-                'frame_count': frame_count
+                'violation_type': violation_type,
+                'violation_description': violation_description,
+                'violation_count': violation_count
             }
             
             producer.produce('detections', value=json.dumps(detection_data))
             producer.flush()
-            print("Detection results sent to Kafka")
+            
+            if frame_count % 100 == 0:  # Progress update every 100 frames
+                print(f"Processed {frame_count} frames, {violation_count} violations detected")
             
         except Exception as e:
             print(f"Error sending detection results: {e}")
@@ -168,11 +257,12 @@ while True:
         break
     except Exception as e:
         print(f"Unexpected error in main loop: {e}")
-        time.sleep(1)  # Brief pause before continuing
+        time.sleep(1)
 
 # Cleanup
 try:
     consumer.close()
-    print("Consumer closed")
+    db_manager.close()
+    print("Services closed gracefully")
 except:
     pass
