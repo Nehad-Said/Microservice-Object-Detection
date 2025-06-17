@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   # Zookeeper (required for Kafka)
   zookeeper:
@@ -15,7 +14,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
   # Kafka Message Broker
   kafka:
     image: confluentinc/cp-kafka:7.4.0
@@ -31,6 +29,8 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_MESSAGE_MAX_BYTES: 10485760
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 10485760
     ports:
       - "29092:29092"
     networks:
@@ -40,7 +40,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-
   # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
@@ -62,10 +61,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
   # Frame Reader Service
   frame_reader:
-    build: ./frame_reader
+    build:
+      context: .
+      dockerfile: frame_reader/Dockerfile
     container_name: frame_reader
     depends_on:
       kafka:
@@ -76,16 +76,15 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/violations_db
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
     volumes:
-      - ./video:/app/video
-      - ./violations:/app/violations
-      - ./shared:/app/shared
+      - ./frame_reader/video:/app/video        # Video files for processing
     networks:
       - app_network
     restart: unless-stopped
-
   # Detection Service
   detection_service:
-    build: ./detection_service
+    build:
+      context: .
+      dockerfile: detection_service/Dockerfile
     container_name: detection_service
     depends_on:
       kafka:
@@ -96,16 +95,15 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/violations_db
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
     volumes:
-      - ./violations:/app/violations
-      - ./shared:/app/shared
-      - ./detection_service/models:/app/models
+      - ./violations:/app/violations            # Directory to save violation images
     networks:
       - app_network
     restart: unless-stopped
-
   # Streaming Service
   streaming_service:
-    build: ./streaming_service
+    build:
+      context: .
+      dockerfile: streaming_service/Dockerfile
     container_name: streaming_service
     depends_on:
       kafka:
@@ -115,19 +113,14 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/violations_db
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-    volumes:
-      - ./violations:/app/violations
-      - ./shared:/app/shared
     ports:
       - "8001:8001"
       - "8000:8000"  # WebSocket port
     networks:
       - app_network
     restart: unless-stopped
-
 volumes:
   postgres_data:
-
 networks:
   app_network:
     driver: bridge
