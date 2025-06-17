@@ -12,7 +12,7 @@
   <canvas id="canvas"></canvas>
   <div>Violations: <span id="count">0</span></div>
   <script>
-    const ws = new WebSocket("ws://localhost:8000/video_feed");
+    const ws = new WebSocket(`ws://${location.hostname}:8000/video_feed`);
     ws.onmessage = e => {
       const data = JSON.parse(e.data);
       const img = new Image();

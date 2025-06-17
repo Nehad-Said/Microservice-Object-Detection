@@ -4,7 +4,8 @@ WORKDIR /app
 
 COPY streaming_service/streaming_service.py .
 COPY shared ./shared
-COPY streaming_service/app.py .  
+COPY streaming_service/app.py . 
+COPY frontend ./frontend 
 
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
