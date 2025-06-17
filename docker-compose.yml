@@ -104,6 +104,8 @@ services:
     build:
       context: .
       dockerfile: streaming_service/Dockerfile
+    volumes:
+      - ./frame_reader/video:/app/video
     container_name: streaming_service
     depends_on:
       kafka:
