@@ -6,4 +6,4 @@ RUN rm -rf /usr/share/nginx/html/*
 
 # Copy your custom frontend files into the container
 COPY index.html /usr/share/nginx/html/index.html
-
+COPY nginx.conf /etc/nginx/nginx.conf

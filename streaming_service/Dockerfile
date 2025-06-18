@@ -4,8 +4,8 @@ WORKDIR /app
 
 COPY streaming_service/streaming_service.py .
 COPY shared ./shared
-COPY streaming_service/app.py . 
-COPY frontend ./frontend 
+COPY streaming_service/app.py .
+COPY frontend ./frontend
 
 RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
@@ -20,9 +20,8 @@ RUN pip install --no-cache-dir \
     numpy \
     websockets \
     python-dotenv \
-    psycopg2-binary
+    psycopg2-binary   
 
-# Add if you rely on shared imports
 ENV PYTHONPATH=/app
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

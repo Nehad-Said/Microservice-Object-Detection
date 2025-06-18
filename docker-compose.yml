@@ -120,6 +120,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/violations_db
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      # Add environment variable for frontend to know the service names
+      - FRONTEND_URL=http://frontend
     ports:
       - "8001:8001"
       - "8000:8000"  # WebSocket port
@@ -137,6 +139,12 @@ services:
       - "80:80"  # Host port 80 -> Nginx
     depends_on:
       - streaming_service
+    environment:
+      # Pass backend service URLs to frontend
+      - STREAMING_SERVICE_HOST=streaming_service
+      - STREAMING_SERVICE_PORT=8000
+      - API_SERVICE_HOST=streaming_service  
+      - API_SERVICE_PORT=8001
     networks:
       - app_network
 
@@ -146,4 +154,3 @@ volumes:
 networks:
   app_network:
     driver: bridge
-
